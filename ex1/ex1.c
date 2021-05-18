@@ -11,6 +11,12 @@
 # define  WORKTODO       1
 # define  NOMOREWORK     0
 
+//COMPILE AND EXECUTE
+// mpicc -Wall -o ex1 ex1.c helperfuncs.c
+// mpiexec -n 4 ./ex1 texts/text0.txt texts/text1.txt texts/text2.txt texts/text3.txt texts/text4.txt
+
+
+/*Struct that will save the reults of the processing*/
 struct PartialInfo finalInfo[10];
 
 int main(int argc, char *argv[]){
@@ -23,6 +29,7 @@ int main(int argc, char *argv[]){
     FILE *file;
     static int chunkSize = 1050;
 
+    //Initialize a struct for each text
     for (int i = 0; i<numberOfFiles; i++){
         finalInfo[i].nwords = 0;
         finalInfo[i].textInd = i;
@@ -32,16 +39,27 @@ int main(int argc, char *argv[]){
         finalInfo[i].rows = 1;
     }
 
+    //MPI
     MPI_Init (&argc, &argv);
     MPI_Comm_rank (MPI_COMM_WORLD, &rank);
     MPI_Comm_size (MPI_COMM_WORLD, &totProc);
 
+    /*This program only works when there are more than 1 processes*/
     if (totProc < 2) {
         fprintf(stderr,"Requires at least two processes.\n");
         MPI_Finalize ();
         return EXIT_FAILURE;
     }
 
+    /*
+    Dispatcher process
+    Process will:
+    
+    read the files
+    Send a chunk of data to a worker process for processing
+    Receive the results of the processing
+    Assemble the partial info received with the final info
+    */
     if (rank == 0)
     { 
         /* dispatcher process
@@ -57,65 +75,49 @@ int main(int argc, char *argv[]){
                 printf("\nUnable to open file.\n");
                 exit(EXIT_FAILURE);
             }
-            printf("---------------OPENED %s-------------- \n", argv[i+1]);
-
 
             int fileFinished = 0;
             while(!fileFinished){   //while file is not done
                 
                 int nProcesses=0;   //number of processes that got chunks
 
+                /*
+                Send a chunk of data to each worker process for processing
+                */
                 for (int nProc = 1 ; nProc < totProc ; nProc++){   //for all processes
                     
                     if (fileFinished)
                         break;
-                    
                     nProcesses++;
                     
-                    int character;
-                    memset(buff, 0, sizeof buff);   //clear buffer
-                    while(1) {  //fill buffer
+                    fileFinished = getChunk(file, buff, chunkSize);
 
-                        character = fgetc(file);
-
-                        if (character == EOF){  //File has ended
-                            printf("Finished File\n");
-                            fclose(file);
-                            fileFinished = 1;
-                            break;
-                        }
-
-                        strcat(buff, &character);
-                        for (int i = 0; i < numberOfBytesInChar((unsigned char)character) - 1; i++) {
-                            character = fgetc(file);
-                            strcat(buff, &character);
-                        }
-
-                        if (strlen(buff)>chunkSize-50 && stopChars(buff[strlen(buff) - 1])){   //Fill buffer with complete words
-                            break;
-                        }
-
-                    }
-
+                    /*Warn workers that the work is not over and give them the buffer*/
                     whatToDo = WORKTODO;
                     MPI_Send (&whatToDo, 1, MPI_UNSIGNED, nProc, 0, MPI_COMM_WORLD);
                     MPI_Send (buff, chunkSize, MPI_CHAR, nProc, 0, MPI_COMM_WORLD);
                 }
 
-                /*Receive data from processes and assemble*/
+                /*
+                Receive data From each process
+                Assemble the partial data received with the data that was stored in the final info
+                */
                 for (int nProc = 1 ; nProc < nProcesses+1 ; nProc++){   //for all processes
                     int nWords;
                     int rows;
                     
+                    /*Receive number of words and number of rows*/
                     MPI_Recv (&nWords,1,MPI_INT,nProc,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
                     MPI_Recv (&rows,1,MPI_INT,nProc,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
 
-                    //resize matrix if necessary since this blob of data can have bigger words
+                    /*resize matrix if necessary since this blob of data can have bigger words*/
                     finalInfo[i].data = prepareMatrix(&(finalInfo[i].rows), rows-1, finalInfo[i].data);
-                    finalInfo[i].nwords += nWords; //total number of words
+                    /*Sum total number of words*/
+                    finalInfo[i].nwords += nWords;
                     
                     for (int row = 1; row < rows; row++){   //row represents number of chars in word (row 2 = words with 2 chars)
                         int data[row+2];
+                        /*Receive row data*/
                         MPI_Recv (data,row+2,MPI_INT,nProc,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
 
                         for (int col = 0; col < row + 1; col++){   //col represents number of consonants (if row = 2, col will get the value of 0, 1 and 2)
@@ -128,23 +130,31 @@ int main(int argc, char *argv[]){
             }
         }  
         
+        /*All texts are over, Dismiss the worker processes*/
         whatToDo = NOMOREWORK;
         for (int nProc = 1 ; nProc < totProc ; nProc++)   //for all processes
             MPI_Send (&whatToDo, 1, MPI_UNSIGNED, nProc, 0, MPI_COMM_WORLD);    //dismiss
         
+        //Print results
         printProcessingResults(numberOfFiles, argv);
 
     }
-    else {  /* worker processes ----------------------------------------------------------------------------------------------
-                the remainder processes of the group */
 
+    /*
+    Worker Process
+    
+    Receive Data chunk and Count words, consonants per length, etc
+    Send the results to the dispatcher
+    */
+    else {  
 
         char buff[1050];
         struct PartialInfo partialInfo;
 
         while (1){
             
-            MPI_Recv (&whatToDo, 1, MPI_UNSIGNED, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            /*If message received is NOMOREWORK THEN PROCESS DIES*/
+            MPI_Recv (&whatToDo, 1, MPI_UNSIGNED, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);     
             if (whatToDo == NOMOREWORK) 
                 break;
 
@@ -167,6 +177,7 @@ int main(int argc, char *argv[]){
 
             processDataString(buff);
 
+            /*Count words consonants etc*/
             while (i < strlen(buff)){   //go through the chars in the buffer
 
                 ch = buff[i];
@@ -207,6 +218,11 @@ int main(int argc, char *argv[]){
                 partialInfo.data[numchars][numchars+1]++;
                 partialInfo.nwords++;
             }
+
+            /*Send The results to the rank 0
+            Send Number of words
+            Send Number of rows in the structure
+            Send each row of the structure*/
             MPI_Send (&partialInfo.nwords, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);    //send number of words
             MPI_Send (&partialInfo.rows, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);    //send number of rows
 
@@ -222,6 +238,11 @@ int main(int argc, char *argv[]){
     return EXIT_SUCCESS;
 }
 
+/**
+ *  \brief process a data chunk removing the accentuation and bad characters.
+ *
+ *  \param data buffer containing the data
+ */
 
 void processDataString(unsigned char * data)
 {
@@ -283,6 +304,14 @@ void processDataString(unsigned char * data)
     data[j]='\0';
 }
 
+/**
+ *  \brief Print function.
+ *
+ *  Print the results stored in the FinalInfo structure.
+ *
+ *  \param ntexts number of texts
+ *  \param files array with file names
+ */
 
 void printProcessingResults(int ntexts, char *files[]){
 
@@ -329,4 +358,43 @@ void printProcessingResults(int ntexts, char *files[]){
             printf("\n");
         }
     }
+}
+
+/**
+ *  \brief Reads a data chunk from a file
+ *
+ *  Reads a chunk of data without cutting utf8 chars
+ *
+ *  \param file file being read
+ *  \param buff buffer were the chunk will be stored
+ *  \param chunkSize size of the chunk to be read
+ */
+int getChunk(FILE *file, char* buff, int chunkSize){
+    int character;
+    int fileFinished = 0;
+    memset(buff, 0, sizeof buff);   //clear buffer
+
+    while(1) {  //fill buffer
+
+        character = fgetc(file);
+
+        if (character == EOF){  //File has ended
+            fclose(file);
+            fileFinished = 1;
+            break;
+        }
+
+        strcat(buff, &character);
+        for (int i = 0; i < numberOfBytesInChar((unsigned char)character) - 1; i++) {
+            character = fgetc(file);
+            strcat(buff, &character);
+        }
+
+        if (strlen(buff)>chunkSize-50 && stopChars(buff[strlen(buff) - 1])){   //Fill buffer with complete words
+            break;
+        }
+
+    }
+    return fileFinished;
+
 }
