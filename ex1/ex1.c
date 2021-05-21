@@ -4,12 +4,19 @@
 #include <string.h>
 #include <pthread.h>
 #include <time.h>
+#include <ctype.h>
 #include <mpi.h>
 #include "helperfuncs.h"
 #include <wchar.h>
 
 # define  WORKTODO       1
 # define  NOMOREWORK     0
+
+int getChunk(FILE *file, char* buff, int chunkSize);
+
+void printProcessingResults(int ntexts, char *files[]);
+
+void processDataString(unsigned char * data);
 
 //COMPILE AND EXECUTE
 // mpicc -Wall -o ex1 ex1.c helperfuncs.c
@@ -188,7 +195,7 @@ int main(int argc, char *argv[]){
                 if ((int)ch < 0 || (int)ch > 127)   //remove non ascii
                     continue;
 
-                if (ch == '\''){    //apostrhope
+                if (ch == '\'' || ch == '`'){    //apostrhope
                     continue;
                 }
 
@@ -370,7 +377,7 @@ void printProcessingResults(int ntexts, char *files[]){
  *  \param chunkSize size of the chunk to be read
  */
 int getChunk(FILE *file, char* buff, int chunkSize){
-    int character;
+    char character;
     int fileFinished = 0;
     memset(buff, 0, sizeof buff);   //clear buffer
 
