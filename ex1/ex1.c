@@ -30,21 +30,7 @@ int main(int argc, char *argv[]){
 
     int rank, totProc;
     unsigned int whatToDo;                                                                                 /* command */
-
-    //data
-    int numberOfFiles = argc-1;
-    FILE *file;
     static int chunkSize = 1050;
-
-    //Initialize a struct for each text
-    for (int i = 0; i<numberOfFiles; i++){
-        finalInfo[i].nwords = 0;
-        finalInfo[i].textInd = i;
-        finalInfo[i].data = (int**)malloc(sizeof(int*));
-        finalInfo[i].data[0] = (int*)malloc(sizeof(int));
-        finalInfo[i].data[0][0] = 0;
-        finalInfo[i].rows = 1;
-    }
 
     //MPI
     MPI_Init (&argc, &argv);
@@ -72,6 +58,24 @@ int main(int argc, char *argv[]){
         /* dispatcher process
         it is the first process of the group */
 
+        //data
+        int numberOfFiles = argc-1;
+        FILE *file;
+        double t0, t1; 
+
+        //Initialize a struct for each text
+        for (int i = 0; i<numberOfFiles; i++){
+            finalInfo[i].nwords = 0;
+            finalInfo[i].textInd = i;
+            finalInfo[i].data = (int**)malloc(sizeof(int*));
+            finalInfo[i].data[0] = (int*)malloc(sizeof(int));
+            finalInfo[i].data[0][0] = 0;
+            finalInfo[i].rows = 1;
+        }
+
+        t0 = ((double) clock ()) / CLOCKS_PER_SEC;  //start elapsed time
+
+        /*start reading text files*/
         char buff[chunkSize];
         for (int i = 0; i < numberOfFiles; i++){    //for all files
 
@@ -143,7 +147,10 @@ int main(int argc, char *argv[]){
             MPI_Send (&whatToDo, 1, MPI_UNSIGNED, nProc, 0, MPI_COMM_WORLD);    //dismiss
         
         //Print results
+        t1 = ((double) clock ()) / CLOCKS_PER_SEC;
         printProcessingResults(numberOfFiles, argv);
+        printf ("\nElapsed time = %.6f s\n", t1 - t0);
+
 
     }
 
