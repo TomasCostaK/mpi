@@ -1,19 +1,14 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <string.h>
-#include <pthread.h>
 #include <time.h>
-#include <ctype.h>
 #include <mpi.h>
 #include "helperfuncs.h"
-#include <wchar.h>
 
 # define  WORKTODO       1
 # define  NOMOREWORK     0
 
 /**
- *  \brief Reads the first line from a file and returns its signal_size
+ *  \brief Reads the first line from a file and returns its signal_size, the signal size is needed for most operations
  *
  *  \param file file being read
  *  \param chunkSize size of the signal_size to be read
@@ -24,10 +19,12 @@ void getSignalSize(FILE *file, int * chunkSize){
 }
 
 /**
- *  \brief Reads the first line from a file and returns its signal_size
+ *  \brief Work to be carried out by each process, calculate the circular cross relation for a given point
  *
- *  \param file file being read
- *  \param chunkSize size of the signal_size to be read
+ *  \param n signal size
+ *  \param x vector x of size n
+ *  \param y vector y of size n
+ *  \param point index to be calculated, ranges from 0 to n
  */
 double computeValue(int n, double * x, double * y, int point){
     double result = 0;
@@ -40,6 +37,11 @@ double computeValue(int n, double * x, double * y, int point){
     return (double) result;
 }
 
+/**
+ *  \brief Reads a file that has recently been processed and checks if all values calculated are correct
+ *
+ *  \param file string containing the name of the file to be processed
+ */
 void checkProcessingResults(char * file){
     printf("\n----------------------------------\nChecking results for %s files\n", file);
 
@@ -95,16 +97,16 @@ int main(int argc, char *argv[])
     Process will:
     
     read the files
-    Send a point of data to a worker process for processing
+    Send every point of data to a worker process for processing, individually
     Receive the results of the processing
-    Assemble the partial info received with the final info
+    Write the final xy vector, when all calculations are processed
+    Check if the results are correct for all files
     */
     if (rank == 0)
     { 
         /* dispatcher process
         it is the first process of the group */
 
-        //data
         int numberOfFiles = argc-1;
         FILE *file;
         double t0, t1; 
@@ -125,6 +127,7 @@ int main(int argc, char *argv[])
             // Get signal_size
             getSignalSize(file, &chunkSize);    
             
+            // Initializing vars
             double x[chunkSize], y[chunkSize], xy[chunkSize], xy_true[chunkSize];
             int currPoint = 0;
 
@@ -134,7 +137,7 @@ int main(int argc, char *argv[])
             fread(&xy_true, sizeof(double [chunkSize]), 1, file);    
             fread(&xy, sizeof(double [chunkSize]), 1, file); 
 
-             //Allocate structure for each file
+             //Allocate and assign the structure for each file (i)
             finalInfo[i].x = x;
             finalInfo[i].y = y;
             finalInfo[i].xy_true = xy_true;
@@ -145,7 +148,6 @@ int main(int argc, char *argv[])
                 
                 int nProcesses=0;   //number of processes that got chunks
 
-                
                 for (int nProc = 1 ; nProc < totProc ; nProc++){   //for all processes
                     
                     if (currPoint == chunkSize){
@@ -155,6 +157,13 @@ int main(int argc, char *argv[])
                     nProcesses++;
                     
                     //Warn workers that the work is not over and give them the point to process
+                    /* 5 total messages are sent: 
+                            If there's work to be done
+                            The signal size of the current file
+                            The point that process will calculate
+                            Vector X
+                            Vector Y
+                    */
                     whatToDo = WORKTODO;
                     MPI_Send (&whatToDo, 1, MPI_UNSIGNED, nProc, 0, MPI_COMM_WORLD);
                     MPI_Send (&chunkSize, 1, MPI_INT, nProc, 0, MPI_COMM_WORLD);
@@ -166,7 +175,7 @@ int main(int argc, char *argv[])
 
                 /*
                 Receive data From each process
-                Assemble the partial data received with the data that was stored in the final info
+                Assign the data received to the respective finalInfo
                 */
                 for (int nProc = 1 ; nProc < nProcesses+1 ; nProc++){   //for all processes
                     double point_value;
@@ -176,15 +185,14 @@ int main(int argc, char *argv[])
                     /*Receive pointIdx data*/
                     MPI_Recv (&point_value,1,MPI_DOUBLE,nProc,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
                     finalInfo[i].xy[pointIdx] = point_value;
-                    //printf("Dispatcher received point XY[%d]=%f, XY_TRUE=: %f\n", pointIdx ,point_value, finalInfo->xy_true[pointIdx]);
                 }
             }
 
             // Writing the results to the file
             fwrite(finalInfo[i].xy, sizeof(double [chunkSize]), 1, file);
             fclose(file);
+            // Check to see if the results of our XY vector are equal to the ones provided in the file
             checkProcessingResults(argv[i+1]);
-
         }
         
         /*All texts are over, Dismiss the worker processes */
@@ -201,7 +209,7 @@ int main(int argc, char *argv[])
     /*
     Worker Process
     
-    Receive Data chunk and Count words, consonants per length, etc
+    Receive point and computeValue for that given point
     Send the results to the dispatcher
     */
     else {  
@@ -220,11 +228,9 @@ int main(int argc, char *argv[])
             double x[signalSize], y[signalSize];
             MPI_Recv (&x, signalSize, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD,MPI_STATUS_IGNORE);    //receive buffer
             MPI_Recv (&y, signalSize, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD,MPI_STATUS_IGNORE);    //receive buffer
-            //printf("Worker %d received, X[%d] = %f\n", rank ,currPoint ,x[currPoint]);
 
             // Process the given point
             processed_point = computeValue(signalSize, x, y, currPoint);
-            //printf("Processed point: %.4f\n\n", processed_point);
 
             MPI_Send (&currPoint, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
             MPI_Send (&processed_point, 1, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);    //send processed point
