@@ -40,6 +40,34 @@ double computeValue(int n, double * x, double * y, int point){
     return (double) result;
 }
 
+void checkProcessingResults(char * file){
+    printf("\n----------------------------------\nChecking results for %s files\n", file);
+
+        FILE * file_tmp = fopen(file, "rb");
+        int count = 0;
+        int signal_size;
+
+        fread(&signal_size, sizeof(int), 1, file_tmp);    
+
+        double x[signal_size], y[signal_size], xy[signal_size], xy_true[signal_size];
+
+        fread(&x, sizeof(double [signal_size]), 1, file_tmp);    
+        fread(&y, sizeof(double [signal_size]), 1, file_tmp);    
+        fread(&xy_true, sizeof(double [signal_size]), 1, file_tmp);    
+
+        fread(&xy, sizeof(double [signal_size]), 1, file_tmp);    
+
+        for (int k = 0; k < signal_size; k++)
+        {
+            if (xy[k] != xy_true[k]) {
+                printf("Values differ on idx: %d, \t RAW=%f  !=  PROCESSED=%f\n", k, xy_true[k], xy[k]);
+                count++;
+            }
+        }
+        if (count == 0) printf("All values are the same for file: %s\n", file);   
+    
+}
+
 /*Struct that will save the reults of the processing*/
 struct PartialInfo finalInfo[10];
 
@@ -151,6 +179,12 @@ int main(int argc, char *argv[])
                     //printf("Dispatcher received point XY[%d]=%f, XY_TRUE=: %f\n", pointIdx ,point_value, finalInfo->xy_true[pointIdx]);
                 }
             }
+
+            // Writing the results to the file
+            fwrite(finalInfo[i].xy, sizeof(double [chunkSize]), 1, file);
+            fclose(file);
+            checkProcessingResults(argv[i+1]);
+
         }
         
         /*All texts are over, Dismiss the worker processes */
@@ -160,7 +194,6 @@ int main(int argc, char *argv[])
         
         //Print results
         t1 = ((double) clock ()) / CLOCKS_PER_SEC;
-        // printProcessingResults(numberOfFiles, argv);
         printf ("\nElapsed time = %.6f s\n", t1 - t0);
 
     }
